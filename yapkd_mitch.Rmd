@@ -1,0 +1,153 @@
+---
+title: "Pathway and TF analysis of the Yap KD data"
+author: "Mark Ziemann"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+theme: cosmo
+---
+
+## Introduction
+
+Yap KD profile
+
+* Reactome
+
+* TFBS TSS
+
+* TFBS ENH
+
+# Packages 
+
+```{r,packages}
+suppressPackageStartupMessages({
+    library("tidyverse")
+    library("reshape2")
+    library("DESeq2")
+    library("gplots")
+    library("fgsea")
+    library("MASS")
+    library("mitch")
+})
+```
+
+# Import profiling data
+
+Here is the Yap knock-down data we generated previously.
+
+```{r,importdata}
+x <- read.table("paired-edgeR.xls",header=TRUE,row.names=1)
+head(x)
+sig <- subset(x,adj.p.value<0.05)
+plot(x$logCPM, x$logFC, col="gray", xlab="logCPM",ylab="log2 fold change")
+points(sig$logCPM, sig$logFC, col="red")
+```
+
+# Gene sets
+
+We will perform analysis using Reactome gene sets as well as Cistrome transcription factor targets (promoter and enhancer).
+
+```{r,genesets}
+
+download.file("https://reactome.org/download/current/ReactomePathways.gmt.zip", destfile="ReactomePathways.gmt.zip")
+unzip("ReactomePathways.gmt.zip")
+reactome <- gmt_import("ReactomePathways.gmt")
+
+tft_tss <- gmt_import("MouseTfPeaks.gmt")
+
+tft_enh <- gmt_import("MouseTfPeaks_enh.gmt")
+
+```
+
+Lets look at the make up of the gene set library.
+Reactome has more smaller sets while TFT targets has mostly 1000 genes.
+
+```{r, genesets2}
+length(reactome)
+length(tft_tss)
+length(tft_enh)
+
+summary(unname(unlist(lapply(reactome,length))))
+summary(unname(unlist(lapply(tft_tss,length))))
+summary(unname(unlist(lapply(tft_enh,length))))
+
+```
+
+# Mitch
+
+Here we will run the mitch package with reactome gene sets (human).
+Reactome gives a broad brush analysis of major biochemical and signaling pathways.
+
+```{r,reactome}
+rownames(x) <- sapply(strsplit(rownames(x),"_"),"[[",1)
+
+m2h <- read.table("mouse2human.txt.sort")
+m2h[,1]=NULL
+
+# import
+m <- mitch_import(x=x,DEtype="edger",geneTable=m2h)
+
+# calc
+capture.output(
+    res <- mitch_calc(x=m,genesets=reactome,priority="effect")
+    , file = "/dev/null", append = FALSE,
+    type = c("output", "message"), split = FALSE)
+
+head(res$enrichment_result,20)
+
+# report
+unlink("yaprna_reactome.html")
+capture.output(
+    mitch_report(res, "yaprna_reactome.html")
+    , file = "/dev/null", append = FALSE,
+    type = c("output", "message"), split = FALSE)
+
+```
+
+Here I'm going to run TFBS enrichment analysis based on TSS binding.
+
+```{r,tss}
+# set up gene table
+x <- read.table("paired-edgeR.xls",header=TRUE,row.names=1)
+gt <-  data.frame(rownames(x))
+gt$gname <-  sapply(strsplit(gt[,1],"_"),"[[",2)
+
+# import
+m <- mitch_import(x=x,DEtype="edger",geneTable=gt)
+
+# calc
+capture.output(
+    res <- mitch_calc(x=m,genesets=tft_tss,priority="effect",minsetsize=50)
+    , file = "/dev/null", append = FALSE,
+    type = c("output", "message"), split = FALSE)
+
+head(res$enrichment_result,20)
+
+unlink("yaprna_tss.html")
+capture.output(
+    mitch_report(res, "yaprna_tss.html")
+    , file = "/dev/null", append = FALSE,
+    type = c("output", "message"), split = FALSE)
+
+```
+
+Here I'm going to run TFBS enrichment analysis based on enhancer binding.
+
+```{r,enh}
+# calc
+capture.output(
+    res <- mitch_calc(x=m,genesets=tft_enh,priority="effect",minsetsize=50)
+    , file = "/dev/null", append = FALSE,
+    type = c("output", "message"), split = FALSE)
+
+head(res$enrichment_result,20)
+
+unlink("yaprna_enh.html")
+capture.output(
+    mitch_report(res, "yaprna_enh.html")
+    , file = "/dev/null", append = FALSE,
+    type = c("output", "message"), split = FALSE)
+```
+
+

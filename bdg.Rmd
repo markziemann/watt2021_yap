@@ -1,0 +1,180 @@
+---
+title: "Create nice coverage plots in R"
+author: "Mark Ziemann"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+theme: cosmo
+---
+
+# Introduction
+
+The goal here is to make some nice coverage plots.
+
+```{r,libs}
+library("rtracklayer")
+library("AnnotationHub")
+library("Rsamtools")
+```
+
+Here are some functions.
+Fillplot is a nice way to turn line graphs into filled plots.
+Mysubset extracts bedgraph data to a plottabl format.
+
+```{r,func}
+# fillplot
+fillplot <- function(x,y,...) {
+plot(x,y,bty="n",...)
+xx <- c(x, rev(x))
+yy <- c(rep(0, length(x)), rev(y))
+polygon(xx, yy,border=NA,...)
+}
+
+# subset granges to a plottable format
+mysubset <- function(bdg,q){
+  ol <- subsetByOverlaps(bdg,q)
+  ol <- as.data.frame(ol)
+  ol <- t(matrix((apply(ol,1,function(x) {
+      x1<-x[c(1,2,6,1,3,6)]  
+    } )),nrow=3))
+  ol <- as.data.frame(ol)
+  colnames(ol) <- c("chr","pos","score")
+  ol$pos <- as.integer(ol$pos)
+  ol$score <- as.integer(ol$score)
+  ol
+}
+```
+
+# ATAC-seq analysis
+
+Here is the mapped read counts for library size normalisation
+
+```{r,counts}
+counts <- read.table("cnt.txt",row.names=1)
+```
+
+Here I'm loading bedgraph from MACS2 callpeak.
+These bedgraph files were compressd with bgzip and indexed with tabix.
+
+```{r,loaddat}
+bdgc1 <- rtracklayer::import("Lacz-1-ATAC_out/NA_treat_pileup.bdg.gz", format="bedGraph")
+bdgc2 <- rtracklayer::import("Lacz-2-ATAC_out/NA_treat_pileup.bdg.gz", format="bedGraph")
+bdgc3 <- rtracklayer::import("Lacz-3-ATAC_out/NA_treat_pileup.bdg.gz", format="bedGraph")
+bdgy1 <- rtracklayer::import("Yap-1-ATAC_out/NA_treat_pileup.bdg.gz", format="bedGraph")
+bdgy2 <- rtracklayer::import("Yap-2-ATAC_out/NA_treat_pileup.bdg.gz", format="bedGraph")
+bdgy3 <- rtracklayer::import("Yap-3-ATAC_out/NA_treat_pileup.bdg.gz", format="bedGraph")
+```
+
+## Regions of interest
+
+Focusing on IDH2 to begin with.
+
+```{r,roi}
+reg1 <- read.table("regions/p01_ATAC_DN_peaks_genes_linked_to_an_enhancer_with_TEAD_motif.bed")
+reg1 <- reg1[which(reg1$V2=="Idh2"),]
+reg1$reg <- sapply(strsplit(reg1$V1,"_"),"[[",2)
+reg1$chr <- sapply(strsplit(reg1$reg,":"),"[[",1)
+reg1$start <- sapply(strsplit(reg1$reg,":"),"[[",2)
+reg1$start <- as.integer(sapply(strsplit(reg1$start,"-"),"[[",1))
+reg1$end <- as.integer(sapply(strsplit(reg1$reg,"-"),"[[",2))
+
+reg1$estart <- sapply(strsplit(reg1$V3,":"),"[[",2)
+reg1$eend <- sapply(strsplit(reg1$estart,"-"),"[[",2)
+reg1$estart <- sapply(strsplit(reg1$estart,"-"),"[[",1)
+
+q <- GRanges(seqnames=reg1$chr,
+          ranges=IRanges(start = reg1$start -1000 , end = reg1$end +1000))
+
+olc1 <- mysubset(bdgc1,q)
+olc1$score <- olc1$score/counts[1,1]*1e6
+
+olc2 <- mysubset(bdgc2,q)
+olc2$score <- olc2$score/counts[2,1]*1e6
+
+olc3 <- mysubset(bdgc3,q)
+olc3$score <- olc3$score/counts[3,1]*1e6
+
+oly1 <- mysubset(bdgy1,q)
+oly1$score <- oly1$score/counts[4,1]*1e6
+
+oly2 <- mysubset(bdgy2,q)
+oly2$score <- oly2$score/counts[5,1]*1e6
+
+oly3 <- mysubset(bdgy3,q)
+oly3$score <- oly3$score/counts[6,1]*1e6
+```
+
+```{r,plot1,fig.width=8,fig.height=8}
+XMAX=max( max(olc1$pos), max(olc2$pos), max(olc3$pos), max(oly1$pos), max(oly2$pos),max(oly3$pos) )
+XMIN=min( min(olc1$pos), min(olc2$pos), min(olc3$pos), min(oly1$pos), min(oly2$pos),min(oly3$pos) )
+YMAX=max( max(olc1$score), max(olc2$score), max(olc3$score), max(oly1$score), max(oly2$score),max(oly3$score) )
+YMIN=min( min(olc1$score), min(olc2$score), min(olc3$score), min(oly1$score), min(oly2$score),min(oly3$score) )
+
+par(mfrow=c(6,1))
+par(mar=c(2,4,1,1))
+fillplot(olc1$pos,olc1$score,type="l",xlab="chr",ylab="C1",ylim=c(YMIN,YMAX),xlim=c(XMIN,XMAX),bty="n",col="blue",xaxt='n'); grid()
+fillplot(olc2$pos,olc2$score,type="l",xlab="chr",ylab="C2",ylim=c(YMIN,YMAX),xlim=c(XMIN,XMAX),bty="n",col="blue",xaxt='n'); grid()
+fillplot(olc3$pos,olc3$score,type="l",xlab="chr",ylab="C3",ylim=c(YMIN,YMAX),xlim=c(XMIN,XMAX),bty="n",col="blue",xaxt='n'); grid()
+fillplot(oly1$pos,oly1$score,type="l",xlab="chr",ylab="Y1",ylim=c(YMIN,YMAX),xlim=c(XMIN,XMAX),bty="n",col="red",xaxt='n'); grid()
+fillplot(oly2$pos,oly2$score,type="l",xlab="chr",ylab="Y2",ylim=c(YMIN,YMAX),xlim=c(XMIN,XMAX),bty="n",col="red",xaxt='n'); grid()
+fillplot(oly3$pos,oly3$score,type="l",xlab="chr",ylab="Y3",ylim=c(YMIN,YMAX),xlim=c(XMIN,XMAX),bty="n",col="red"); grid()
+mtext(paste(reg1$V1,reg1$V2))
+lines(c(reg1$start,reg1$end),c(0,0),col="gray",lwd=8)
+lines(c(reg1$estart,reg1$eend),c(0,0),col="black",lwd=8)
+```
+
+## Peaks with smallest p-values
+
+Peak no. 3 has a nice clear peak.
+
+```{r,top}
+# top regions
+top <- read.table("edgeR_atac_cov2_LacZvsYap.tsv",header=TRUE)
+top <- top[3,]
+top$reg <- sapply(strsplit(top[,1],"_"),"[[",2)
+top$chr <- sapply(strsplit(top$reg,":"),"[[",1)
+top$start <- sapply(strsplit(top$reg,":"),"[[",2)
+top$start <- as.integer(sapply(strsplit(top$start,"-"),"[[",1))
+top$end <- as.integer(sapply(strsplit(top$reg,"-"),"[[",2))
+
+q <- GRanges(seqnames=top$chr,
+          ranges=IRanges(start = top$start -500 , end = top$end +500))
+
+olc1 <- mysubset(bdgc1,q)
+olc1$score <- olc1$score/counts[1,1]*1e6
+
+olc2 <- mysubset(bdgc2,q)
+olc2$score <- olc2$score/counts[2,1]*1e6
+
+olc3 <- mysubset(bdgc3,q)
+olc3$score <- olc3$score/counts[3,1]*1e6
+
+oly1 <- mysubset(bdgy1,q)
+oly1$score <- oly1$score/counts[4,1]*1e6
+
+oly2 <- mysubset(bdgy2,q)
+oly2$score <- oly2$score/counts[5,1]*1e6
+
+oly3 <- mysubset(bdgy3,q)
+oly3$score <- oly3$score/counts[6,1]*1e6
+```
+
+```{r,plot2,fig.width=8,fig.height=8}
+XMAX=max( max(olc1$pos), max(olc2$pos), max(olc3$pos), max(oly1$pos), max(oly2$pos),max(oly3$pos) )
+XMIN=min( min(olc1$pos), min(olc2$pos), min(olc3$pos), min(oly1$pos), min(oly2$pos),min(oly3$pos) )
+YMAX=max( max(olc1$score), max(olc2$score), max(olc3$score), max(oly1$score), max(oly2$score),max(oly3$score) )
+YMIN=min( min(olc1$score), min(olc2$score), min(olc3$score), min(oly1$score), min(oly2$score),min(oly3$score) )
+
+par(mfrow=c(6,1))
+par(mar=c(2,4,1,1))
+fillplot(olc1$pos,olc1$score,type="l",xlab="chr",ylab="C1",ylim=c(YMIN,YMAX),xlim=c(XMIN,XMAX),bty="n",col="blue",xaxt='n'); grid()
+fillplot(olc2$pos,olc2$score,type="l",xlab="chr",ylab="C2",ylim=c(YMIN,YMAX),xlim=c(XMIN,XMAX),bty="n",col="blue",xaxt='n'); grid()
+fillplot(olc3$pos,olc3$score,type="l",xlab="chr",ylab="C3",ylim=c(YMIN,YMAX),xlim=c(XMIN,XMAX),bty="n",col="blue",xaxt='n'); grid()
+fillplot(oly1$pos,oly1$score,type="l",xlab="chr",ylab="Y1",ylim=c(YMIN,YMAX),xlim=c(XMIN,XMAX),bty="n",col="red",xaxt='n'); grid()
+fillplot(oly2$pos,oly2$score,type="l",xlab="chr",ylab="Y2",ylim=c(YMIN,YMAX),xlim=c(XMIN,XMAX),bty="n",col="red",xaxt='n'); grid()
+fillplot(oly3$pos,oly3$score,type="l",xlab="chr",ylab="Y3",ylim=c(YMIN,YMAX),xlim=c(XMIN,XMAX),bty="n",col="red"); grid()
+mtext(paste(top$Name,"logFC:",round(top$logFC,2)))
+lines(c(top$start,top$end),c(0,0),col="gray",lwd=8)
+```
+

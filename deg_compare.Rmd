@@ -1,0 +1,133 @@
+---
+title: "Compare edgeR and DESeq2 results"
+author: "Mark Ziemann"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+theme: cosmo
+---
+
+
+```{r,libs}
+library("edgeR")
+library("DESeq2")
+library("eulerr")
+```
+
+
+```{r,input}
+x <- read.table("mouseATAC_peaks_cov2.bed.saf.pe.mx",row.names=1,header=TRUE)
+colnames(x) <- sapply(strsplit(colnames(x),"\\.A"),"[[",1)
+xx <- x[which(rowMeans(x)>10),]
+
+ss <- as.data.frame(colnames(xx))
+
+ss$trt <- as.integer(grepl("Yap",ss[,1]))
+rownames(ss) <- ss[,1]
+ss[,1]=NULL
+
+```
+
+
+```{r,edger}
+
+design <- model.matrix(~ss$trt)
+rownames(design) <- rownames(ss)
+z <- DGEList(counts=xx)
+z <- calcNormFactors(z)
+z <- estimateDisp(z, design,robust=TRUE,prior.df=1)
+fit <- glmFit(z, design)
+lrt<-glmLRT(fit)
+dge<-as.data.frame(topTags(lrt,n=Inf))
+dge$dispersion<-lrt$dispersion
+dge<-merge(dge,lrt$fitted.values,by='row.names')
+rownames(dge)=dge$Row.names
+dge$Row.names=NULL
+dge<-dge[order(dge$PValue),]
+head(dge)
+dge_edger <- dge
+sig <- subset(dge_edger,FDR<0.05)
+dge_edger_up <- rownames(subset(sig,logFC>0))
+dge_edger_dn <- rownames(subset(sig,logFC<0))
+length(dge_edger_up)
+length(dge_edger_dn)
+
+```
+
+
+
+
+```{r,edgerql}
+
+design <- model.matrix(~ss$trt)
+rownames(design) <- rownames(ss)
+z <- DGEList(counts=xx)
+z <- calcNormFactors(z)
+z <- estimateDisp(z, design,robust=TRUE,prior.df=1)
+fit <- glmQLFit(z, design)
+lrt <- glmQLFTest(fit)
+dge<-as.data.frame(topTags(lrt,n=Inf))
+dge$dispersion<-lrt$dispersion
+dge<-merge(dge,lrt$fitted.values,by='row.names')
+rownames(dge)=dge$Row.names
+dge$Row.names=NULL
+dge<-dge[order(dge$PValue),]
+head(dge)
+dge_edgerql <- dge
+sig <- subset(dge_edgerql,FDR<0.05)
+dge_edgerql_up <- rownames(subset(sig,logFC>0))
+dge_edgerql_dn <- rownames(subset(sig,logFC<0))
+length(dge_edgerql_up)
+length(dge_edgerql_dn)
+
+```
+
+
+```{r,deseq2}
+
+dds <- DESeqDataSetFromMatrix(countData = xx , colData = ss, design = ~ trt )
+res <- DESeq(dds)
+z<- results(res)
+vsd <- vst(dds, blind=FALSE)
+zz<-cbind(as.data.frame(z),assay(vsd))
+dge<-as.data.frame(zz[order(zz$pvalue),])
+head(dge)
+dge_deseq2 <- dge
+sig <- subset(dge,padj<0.05)
+dge_deseq2_up <- rownames(subset(sig,log2FoldChange>0))
+dge_deseq2_dn <- rownames(subset(sig,log2FoldChange<0))
+length(dge_deseq2_up)
+length(dge_deseq2_dn)
+
+```
+
+```{r,venn}
+
+v1 <- list("edgeR up"=dge_edger_up, "edgeR dn"=dge_edger_dn,
+  "DESeq2 up"=dge_deseq2_up,"DESeq2 dn"=dge_deseq2_dn,
+  "edgeR_QL up"=dge_edgerql_up, "edgeR_QL dn"=dge_edgerql_dn)
+plot(euler(v1),quantities = TRUE)
+```
+
+Let's look at the Idh2 peak.
+
+```{r,Idh2}
+# edgeR
+t(dge_edger[grep("7:80121026-80121603",rownames(dge_edger)),])
+
+# DESeq2
+t(dge_deseq2[grep("7:80121026-80121603",rownames(dge_deseq2)),])
+
+```
+
+Now the clear peak for comparison.
+
+```{r,top}
+# edgeR
+t(dge_edger[grep("9:72863611-72864135",rownames(dge_edger)),])
+
+# DESeq2
+t(dge_deseq2[grep("9:72863611-72864135",rownames(dge_deseq2)),])
+
+```

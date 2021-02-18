@@ -1,0 +1,559 @@
+
+
+reallybig = log10(.Machine$double.xmax)
+reallysmall = log10(.Machine$double.xmin)
+library('stringr')
+library('gplots')
+library('edgeR')
+
+hmap2 = function(cmat,nsamp=100,outpdfname='heatmap2.pdf', TName='Treatment',group=NA,myTitle='title goes here')
+{
+    samples = colnames(cmat)
+    gu = unique(group)
+    if (length(gu) == 2) {
+        col.map = function(g) {if (g==gu[1]) "#FF0000" else "#0000FF"}
+        pcols = unlist(lapply(group,col.map))
+        } else {
+        colours = rainbow(length(gu),start=0,end=4/6)
+        pcols = colours[match(group,gu)]
+    }
+    gn = rownames(cmat)
+    dm = cmat[(! is.na(gn)),]
+    nprobes = nrow(dm)
+    if (nprobes > nsamp) {
+      dm =dm[1:nsamp,]
+    }
+    newcolnames = substr(colnames(dm),1,20)
+    colnames(dm) = newcolnames
+    pdf(outpdfname)
+    heatmap.2(dm,main=myTitle,ColSideColors=pcols,col=topo.colors(100),dendrogram="col",key=T,density.info='none',
+         Rowv=F,scale='row',trace='none',margins=c(8,8),cexRow=0.4,cexCol=0.5)
+    dev.off()
+}
+
+hmap = function(cmat,nmeans=4,outpdfname="heatMap.pdf",nsamp=250,TName='Treatment',group=NA,myTitle="Title goes here")
+{
+    gu = unique(group)
+    colours = rainbow(length(gu),start=0.3,end=0.6)
+    pcols = colours[match(group,gu)]
+    nrows = nrow(cmat)
+    mtitle = paste(myTitle,'Heatmap: n contigs =',nrows)
+    if (nrows > nsamp)  {
+               cmat = cmat[c(1:nsamp),]
+               mtitle = paste('Heatmap: Top ',nsamp,' DE contigs (of ',nrows,')',sep='')
+          }
+    newcolnames = substr(colnames(cmat),1,20)
+    colnames(cmat) = newcolnames
+    pdf(outpdfname)
+    heatmap(cmat,scale='row',main=mtitle,cexRow=0.3,cexCol=0.4,Rowv=NA,ColSideColors=pcols)
+    dev.off()
+}
+
+qqPlot = function(descr='Title',pvector, ...)
+{
+    o = -log10(sort(pvector,decreasing=F))
+    e = -log10( 1:length(o)/length(o) )
+    o[o==-Inf] = reallysmall
+    o[o==Inf] = reallybig
+    pdfname = paste(gsub(" ","", descr , fixed=TRUE),'pval_qq.pdf',sep='_')
+    maint = paste(descr,'QQ Plot')
+    pdf(pdfname)
+    plot(e,o,pch=19,cex=1, main=maint, ...,
+        xlab=expression(Expected~~-log[10](italic(p))),
+        ylab=expression(Observed~~-log[10](italic(p))),
+        xlim=c(0,max(e)), ylim=c(0,max(o)))
+    lines(e,e,col="red")
+    grid(col = "lightgray", lty = "dotted")
+    dev.off()
+}
+
+smearPlot = function(DGEList,deTags, outSmear, outMain)
+        {
+        pdf(outSmear)
+        plotSmear(DGEList,de.tags=deTags,main=outMain)
+        grid(col="blue")
+        dev.off()
+        }
+
+boxPlot = function(rawrs,cleanrs,maint,myTitle)
+{
+        nc = ncol(rawrs)
+        for (i in c(1:nc)) {rawrs[(rawrs[,i] < 0),i] = NA}
+        fullnames = colnames(rawrs)
+        newcolnames = substr(colnames(rawrs),1,20)
+        colnames(rawrs) = newcolnames
+        newcolnames = substr(colnames(cleanrs),1,20)
+        colnames(cleanrs) = newcolnames
+        pdfname = paste(gsub(" ","", myTitle , fixed=TRUE),"sampleBoxplot.pdf",sep='_')
+        defpar = par(no.readonly=T)
+        pdf(pdfname)
+        l = layout(matrix(c(1,2),1,2,byrow=T))
+        print.noquote('raw contig counts by sample:')
+        print.noquote(summary(rawrs))
+        print.noquote('normalised contig counts by sample:')
+        print.noquote(summary(cleanrs))
+        boxplot(rawrs,varwidth=T,notch=T,ylab='log contig count',col="maroon",las=3,cex.axis=0.35,main=paste('Raw:',maint))
+        grid(col="blue")
+        boxplot(cleanrs,varwidth=T,notch=T,ylab='log contig count',col="maroon",las=3,cex.axis=0.35,main=paste('After ',maint))
+        grid(col="blue")
+        dev.off()
+        pdfname = paste(gsub(" ","", myTitle , fixed=TRUE),"samplehistplot.pdf",sep='_')
+        nc = ncol(rawrs)
+        print.noquote(paste('Using ncol rawrs=',nc))
+        ncroot = round(sqrt(nc))
+        if (ncroot*ncroot < nc) { ncroot = ncroot + 1 }
+        m = c()
+        for (i in c(1:nc)) {
+              rhist = hist(rawrs[,i],breaks=100,plot=F)
+              m = append(m,max(rhist$counts))
+             }
+        ymax = max(m)
+        pdf(pdfname)
+        par(mfrow=c(ncroot,ncroot))
+        for (i in c(1:nc)) {
+                 hist(rawrs[,i], main=paste("Contig logcount",i), xlab='log raw count', col="maroon",
+                 breaks=100,sub=fullnames[i],cex=0.8,ylim=c(0,ymax))
+             }
+        dev.off()
+        par(defpar)
+
+}
+
+cumPlot = function(rawrs,cleanrs,maint,myTitle)
+{
+        pdfname = paste(gsub(" ","", myTitle , fixed=TRUE),"RowsumCum.pdf",sep='_')
+        defpar = par(no.readonly=T)
+        pdf(pdfname)
+        par(mfrow=c(2,1))
+        lrs = log(rawrs,10)
+        lim = max(lrs)
+        hist(lrs,breaks=100,main=paste('Before:',maint),xlab="Reads (log)",
+             ylab="Count",col="maroon",sub=myTitle, xlim=c(0,lim),las=1)
+        grid(col="blue")
+        lrs = log(cleanrs,10)
+        hist(lrs,breaks=100,main=paste('After:',maint),xlab="Reads (log)",
+             ylab="Count",col="maroon",sub=myTitle,xlim=c(0,lim),las=1)
+        grid(col="blue")
+        dev.off()
+        par(defpar)
+}
+
+cumPlot1 = function(rawrs,cleanrs,maint,myTitle)
+{
+        pdfname = paste(gsub(" ","", myTitle , fixed=TRUE),"RowsumCum.pdf",sep='_')
+        pdf(pdfname)
+        par(mfrow=c(2,1))
+        lastx = max(rawrs)
+        rawe = knots(ecdf(rawrs))
+        cleane = knots(ecdf(cleanrs))
+        cy = 1:length(cleane)/length(cleane)
+        ry = 1:length(rawe)/length(rawe)
+        plot(rawe,ry,type='l',main=paste('Before',maint),xlab="Log Contig Total Reads",
+             ylab="Cumulative proportion",col="maroon",log='x',xlim=c(1,lastx),sub=myTitle)
+        grid(col="blue")
+        plot(cleane,cy,type='l',main=paste('After',maint),xlab="Log Contig Total Reads",
+             ylab="Cumulative proportion",col="maroon",log='x',xlim=c(1,lastx),sub=myTitle)
+        grid(col="blue")
+        dev.off()
+}
+
+
+
+doGSEA = function(y=NULL,design=NULL,histgmt="",
+                  bigmt="/data/genomes/gsea/3.1/Abetterchoice_nocgp_c2_c3_c5_symbols_all.gmt",
+                  ntest=0, myTitle="myTitle", outfname="GSEA.xls", minnin=5, maxnin=2000,fdrthresh=0.05,fdrtype="BH")
+{
+  genesets = c()
+  if (bigmt > "")
+  {
+    bigenesets = readLines(bigmt)
+    genesets = bigenesets
+  }
+  if (histgmt > "")
+  {
+    hgenesets = readLines(histgmt)
+    if (bigmt > "") {
+      genesets = rbind(genesets,hgenesets)
+    } else {
+      genesets = hgenesets
+    }
+  }
+  print.noquote(paste("@@@read",length(genesets), 'genesets from',histgmt,bigmt))
+  genesets = strsplit(genesets,'\t')
+  outf = outfname
+  head=paste(myTitle,'edgeR GSEA')
+  write(head,file=outfname,append=F)
+  ntest=length(genesets)
+  urownames = toupper(rownames(y))
+  upcam = c()
+  downcam = c()
+  for (i in 1:ntest) {
+    gs = unlist(genesets[i])
+    g = gs[1]
+    u = gs[2]
+    if (u > "") { u = paste("<a href=\'",u,"\'>",u,"</a>",sep="") }
+    glist = gs[3:length(gs)]
+    glist = toupper(glist)
+    inglist = urownames %in% glist
+    nin = sum(inglist)
+    if ((nin > minnin) && (nin < maxnin)) {
+      camres = camera(y=y,index=inglist,design=design)
+      if (camres) {
+      rownames(camres) = g
+      camres = cbind(GeneSet=g,URL=u,camres)
+      if (camres$Direction == "Up")
+        {
+        upcam = rbind(upcam,camres) } else {
+          downcam = rbind(downcam,camres)
+        }
+      }
+   }
+  }
+  uscam = upcam[order(upcam$PValue),]
+  unadjp = uscam$PValue
+  uscam$adjPValue = p.adjust(unadjp,method=fdrtype)
+  nup = max(10,sum((uscam$adjPValue < fdrthresh)))
+  dscam = downcam[order(downcam$PValue),]
+  unadjp = dscam$PValue
+  dscam$adjPValue = p.adjust(unadjp,method=fdrtype)
+  ndown = max(10,sum((dscam$adjPValue < fdrthresh)))
+  write.table(uscam,file=paste('upCamera',outfname,sep='_'),quote=F,sep='\t',row.names=F)
+  write.table(dscam,file=paste('downCamera',outfname,sep='_'),quote=F,sep='\t',row.names=F)
+  print.noquote(paste('@@@@@ Camera up top',nup,'gene sets:'))
+  write.table(head(uscam,nup),file="",quote=F,sep='\t',row.names=F)
+  print.noquote(paste('@@@@@ Camera down top',ndown,'gene sets:'))
+  write.table(head(dscam,ndown),file="",quote=F,sep='\t',row.names=F)
+}
+
+
+
+edgeIt = function (Count_Matrix,group,outputfilename,fdrtype='fdr',priordf=5,
+        fdrthresh=0.05,outputdir='.', myTitle='edgeR',libSize=c(),useNDF=F,
+        filterquantile=0.2, subjects=c(),mydesign=NULL,
+        doDESeq=T,doVoom=T,doCamera=T,org='hg19',
+        histgmt="", bigmt="/data/genomes/gsea/3.1/Abetterchoice_nocgp_c2_c3_c5_symbols_all.gmt",
+        doCook=F,DESeq_fittype="parameteric")
+{
+  if (length(unique(group))!=2){
+    print("Number of conditions identified in experiment does not equal 2")
+    q()
+    }
+  require(edgeR)
+  options(width = 512)
+  mt = paste(unlist(strsplit(myTitle,'_')),collapse=" ")
+  allN = nrow(Count_Matrix)
+  nscut = round(ncol(Count_Matrix)/2)
+  colTotmillionreads = colSums(Count_Matrix)/1e6
+  rawrs = rowSums(Count_Matrix)
+  nonzerod = Count_Matrix[(rawrs > 0),]
+  nzN = nrow(nonzerod)
+  nzrs = rowSums(nonzerod)
+  zN = allN - nzN
+  print('**** Quantiles for non-zero row counts:',quote=F)
+  print(quantile(nzrs,probs=seq(0,1,0.1)),quote=F)
+  if (useNDF == "T")
+  {
+    gt1rpin3 = rowSums(Count_Matrix/expandAsMatrix(colTotmillionreads,dim(Count_Matrix)) >= 1) >= nscut
+    lo = colSums(Count_Matrix[!gt1rpin3,])
+    workCM = Count_Matrix[gt1rpin3,]
+    cleanrs = rowSums(workCM)
+    cleanN = length(cleanrs)
+    meth = paste( "After removing",length(lo),"contigs with fewer than ",nscut," sample read counts >= 1 per million, there are",sep="")
+    print(paste("Read",allN,"contigs. Removed",zN,"contigs with no reads.",meth,cleanN,"contigs"),quote=F)
+    maint = paste('Filter >= 1/million reads in >=',nscut,'samples')
+  }   else {
+    useme = (nzrs > quantile(nzrs,filterquantile))
+    workCM = nonzerod[useme,]
+    lo = colSums(nonzerod[!useme,])
+    cleanrs = rowSums(workCM)
+    cleanN = length(cleanrs)
+    meth = paste("After filtering at count quantile =",filterquantile,", there are",sep="")
+    print(paste('Read',allN,"contigs. Removed",zN,"with no reads.",meth,cleanN,"contigs"),quote=F)
+    maint = paste('Filter below',filterquantile,'quantile')
+  }
+  cumPlot(rawrs=rawrs,cleanrs=cleanrs,maint=maint,myTitle=myTitle)
+  allgenes <- rownames(workCM)
+  print(paste("*** Total low count contigs per sample = ",paste(lo,collapse=',')),quote=F)
+  rsums = rowSums(workCM)
+  TName=unique(group)[1]
+  CName=unique(group)[2]
+  DGEList = DGEList(counts=workCM, group = group)
+  DGEList = calcNormFactors(DGEList)
+
+  if (is.null(mydesign)) {
+    if (length(subjects) == 0)
+    {
+      mydesign = model.matrix(~group)
+    }
+    else {
+      subjf = factor(subjects)
+      mydesign = model.matrix(~subjf+group)
+    }
+  }
+  print.noquote(paste('Using samples:',paste(colnames(workCM),collapse=',')))
+  print.noquote('Using design matrix:')
+  print.noquote(mydesign)
+  DGEList = estimateGLMCommonDisp(DGEList,mydesign)
+  comdisp = DGEList$common.dispersion
+  DGEList = estimateGLMTrendedDisp(DGEList,mydesign)
+  if (priordf > 0) {
+    print.noquote(paste("prior.df =",priordf))
+    DGEList = estimateGLMTagwiseDisp(DGEList,mydesign,prior.df = priordf)
+  } else {
+    DGEList = estimateGLMTagwiseDisp(DGEList,mydesign)
+  }
+  lastcoef=ncol(mydesign)
+  print.noquote(paste('*** lastcoef = ',lastcoef))
+  estpriorn = getPriorN(DGEList)
+  predLFC1 = predFC(DGEList,prior.count=1,design=mydesign,dispersion=DGEList$tagwise.dispersion,offset=getOffset(DGEList))
+  predLFC3 = predFC(DGEList,prior.count=3,design=mydesign,dispersion=DGEList$tagwise.dispersion,offset=getOffset(DGEList))
+  predLFC5 = predFC(DGEList,prior.count=5,design=mydesign,dispersion=DGEList$tagwise.dispersion,offset=getOffset(DGEList))
+  DGLM = glmFit(DGEList,design=mydesign)
+  DE = glmLRT(DGLM)
+  logCPMnorm = cpm(DGEList,log=T,normalized.lib.sizes=T)
+  logCPMraw = cpm(DGEList,log=T,normalized.lib.sizes=F)
+  uoutput = cbind(
+    Name=as.character(rownames(DGEList$counts)),
+    DE$table,
+    adj.p.value=p.adjust(DE$table$PValue, method=fdrtype),
+    Dispersion=DGEList$tagwise.dispersion,totreads=rsums,
+    predLFC1=predLFC1[,lastcoef],
+    predLFC3=predLFC3[,lastcoef],
+    predLFC5=predLFC5[,lastcoef],
+    logCPMnorm,
+    DGEList$counts
+  )
+  soutput = uoutput[order(DE$table$PValue),]
+  heatlogcpmnorm = logCPMnorm[order(DE$table$PValue),]
+  goodness = gof(DGLM, pcutoff=fdrthresh)
+  noutl = (sum(goodness$outlier) > 0)
+  if (noutl > 0) {
+        print.noquote(paste('***',noutl,'GLM outliers found'))
+        print(paste(rownames(DGLM)[(goodness$outlier)],collapse=','),quote=F)
+    } else {
+      print('*** No GLM fit outlier genes found')
+    }
+  z = limma::zscoreGamma(goodness$gof.statistic, shape=goodness$df/2, scale=2)
+  pdf(paste(mt,"GoodnessofFit.pdf",sep='_'))
+  qq = qqnorm(z, panel.first=grid(), main="tagwise dispersion")
+  abline(0,1,lwd=3)
+  points(qq$x[goodness$outlier],qq$y[goodness$outlier], pch=16, col="maroon")
+  dev.off()
+  print(paste("Common Dispersion =",comdisp,"CV = ",sqrt(comdisp),"getPriorN = ",estpriorn),quote=F)
+  uniqueg = unique(group)
+  sample_colors =  match(group,levels(group))
+  pdf(paste(mt,"MDSplot.pdf",sep='_'))
+  sampleTypes = levels(factor(group))
+  print.noquote(sampleTypes)
+  plotMDS.DGEList(DGEList,main=paste("MDS Plot for",myTitle),cex=0.5,col=sample_colors,pch=sample_colors)
+  legend(x="topleft", legend = sampleTypes,col=c(1:length(sampleTypes)), pch=19)
+  grid(col="blue")
+  dev.off()
+  colnames(logCPMnorm) = paste( colnames(logCPMnorm),'N',sep="_")
+  print(paste('Raw sample CPM',paste(colSums(logCPMraw,na.rm=T),collapse=',')))
+  try(boxPlot(rawrs=logCPMraw,cleanrs=logCPMnorm,maint='TMM Normalisation',myTitle=myTitle))
+  nreads = soutput$totreads
+  print('*** writing output',quote=F)
+  write.table(soutput,outputfilename, quote=FALSE, sep="\t",row.names=F)
+  rn = row.names(workCM)
+  print.noquote('@@ rn')
+  print.noquote(head(rn))
+  reg = "^chr([0-9]+):([0-9]+)-([0-9]+)"
+  genecards="<a href=\'http://www.genecards.org/index.php?path=/Search/keyword/"
+  ucsc = paste("<a href=\'http://genome.ucsc.edu/cgi-bin/hgTracks?db=",org,sep='')
+  testreg = str_match(rn,reg)
+  nreads = uoutput$totreads
+  if (sum(!is.na(testreg[,1]))/length(testreg[,1]) > 0.8)
+  {
+    print("@@ using ucsc substitution for urls")
+    urls = paste0(ucsc,"&amp;position=chr",testreg[,2],":",testreg[,3],"-",testreg[,4],"\'>",rn,"</a>")
+  } else {
+    print("@@ using genecards substitution for urls")
+    urls = paste0(genecards,rn,"\'>",rn,"</a>")
+  }
+  tt = uoutput
+  print.noquote("*** edgeR Top tags\n")
+  tt = cbind(tt,ntotreads=nreads,URL=urls)
+  tt = tt[order(DE$table$PValue),]
+  print.noquote(tt[1:50,])
+  deTags = rownames(uoutput[uoutput$adj.p.value < fdrthresh,])
+  nsig = length(deTags)
+  print(paste('***',nsig,'tags significant at adj p=',fdrthresh),quote=F)
+  if (nsig > 0) {
+      print('*** deTags',quote=F)
+      print(head(deTags))
+    }
+  deColours = ifelse(deTags,'red','black')
+  pdf(paste(mt,"BCV_vs_abundance.pdf",sep='_'))
+  plotBCV(DGEList, cex=0.3, main="Biological CV vs abundance")
+  dev.off()
+  dg = DGEList[order(DE$table$PValue),]
+  outpdfname=paste(mt,"heatmap.pdf",sep='_')
+  hmap2(heatlogcpmnorm,nsamp=100,TName=TName,group=group,outpdfname=outpdfname,myTitle=myTitle)
+  outSmear = paste(mt,"Smearplot.pdf",sep='_')
+  outMain = paste("Smear Plot for ",TName,' Vs ',CName,' (FDR@',fdrthresh,' N = ',nsig,')',sep='')
+  smearPlot(DGEList=DGEList,deTags=deTags, outSmear=outSmear, outMain = outMain)
+  qqPlot(descr=myTitle,pvector=DE$table$PValue)
+  if (doDESeq == T)
+  {
+    require('DESeq2')
+    print.noquote(paste('****subjects=',subjects,'length=',length(subjects)))
+    if (length(subjects) == 0)
+        {
+        pdata = data.frame(Name=colnames(workCM),Rx=group,row.names=colnames(workCM))
+        deSEQds = DESeqDataSetFromMatrix(countData = workCM,  colData = pdata, design = formula(~ Rx))
+        } else {
+        pdata = data.frame(Name=colnames(workCM),Rx=group,subjects=subjects,row.names=colnames(workCM))
+        deSEQds = DESeqDataSetFromMatrix(countData = workCM,  colData = pdata, design = formula(~ subjects + Rx))
+        }
+    deSeqDatsizefac <- estimateSizeFactors(deSEQds)
+    deSeqDatdisp <- estimateDispersions(deSeqDatsizefac,fitType=DESeq_fittype)
+    resDESeq <- nbinomWaldTest(deSeqDatdisp, pAdjustMethod=fdrtype)
+    rDESeq = as.data.frame(results(resDESeq))
+    srDESeq = rDESeq[order(rDESeq$pvalue),]
+    write.table(srDESeq,paste(mt,'DESeq2_TopTable.xls',sep='_'), quote=FALSE, sep="\t",row.names=F)
+    topresults.DESeq <- rDESeq[which(rDESeq$padj < fdrthresh), ]
+    DESeqcountsindex <- which(allgenes %in% rownames(topresults.DESeq))
+    DESeqcounts <- rep(0, length(allgenes))
+    DESeqcounts[DESeqcountsindex] <- 1
+    pdf(paste(mt,"DESeq2_dispersion_estimates.pdf",sep='_'))
+    plotDispEsts(resDESeq)
+    dev.off()
+    if (doCook) {
+       pdf(paste(mt,"DESeq2_cooks_distance.pdf",sep='_'))
+       W <- mcols(resDESeq)$WaldStatistic_condition_treated_vs_untreated
+       maxCooks <- mcols(resDESeq)$maxCooks
+       idx <- !is.na(W)
+       plot(rank(W[idx]), maxCooks[idx], xlab="rank of Wald statistic", ylab="maximum Cook's distance per gene",
+          ylim=c(0,5), cex=.4, col="maroon")
+       m <- ncol(dds)
+       p <- 3
+       abline(h=qf(.75, p, m - p),col="darkblue")
+       grid(col="lightgray",lty="dotted")
+    }
+  }
+  counts.dataframe = as.data.frame(c())
+  norm.factor = DGEList$samples$norm.factors
+  topresults.edgeR <- soutput[which(soutput$adj.p.value < fdrthresh), ]
+  edgeRcountsindex <- which(allgenes %in% rownames(topresults.edgeR))
+  edgeRcounts <- rep(0, length(allgenes))
+  edgeRcounts[edgeRcountsindex] <- 1
+  if (doVoom == T) {
+      pdf(paste(mt,"voomplot.pdf",sep='_'))
+      dat.voomed <- voom(DGEList, mydesign, plot = TRUE, normalize.method="quantil", lib.size = NULL)
+      dev.off()
+      fit <- lmFit(dat.voomed, mydesign)
+      fit <- eBayes(fit)
+      rvoom <- topTable(fit, coef = length(colnames(mydesign)), adj = "BH", n = Inf)
+      write.table(rvoom,paste(mt,'VOOM_topTable.xls',sep='_'), quote=FALSE, sep="\t",row.names=F)
+      topresults.voom <- rvoom[which(rvoom$adj.P.Val < fdrthresh), ]
+      voomcountsindex <- which(allgenes %in% rownames(topresults.voom))
+      voomcounts <- rep(0, length(allgenes))
+      voomcounts[voomcountsindex] <- 1
+  }
+  if ((doDESeq==T) || (doVoom==T)) {
+    if ((doVoom==T) && (doDESeq==T)) {
+        vennmain = paste(mt,'Voom,edgeR and DESeq2 overlap at FDR=',fdrthresh)
+        counts.dataframe <- data.frame(edgeR = edgeRcounts, DESeq2 = DESeqcounts,
+                                       VOOM_limma = voomcounts, row.names = allgenes)
+       } else if (doDESeq==T) {
+         vennmain = paste(mt,'DESeq2 and edgeR overlap at FDR=',fdrthresh)
+         counts.dataframe <- data.frame(edgeR = edgeRcounts, DESeq2 = DESeqcounts, row.names = allgenes)
+       } else if (doVoom==T) {
+        vennmain = paste(mt,'Voom and edgeR overlap at FDR=',fdrthresh)
+        counts.dataframe <- data.frame(edgeR = edgeRcounts, VOOM_limma = voomcounts, row.names = allgenes)
+       }
+
+    if (nrow(counts.dataframe > 1)) {
+      counts.venn <- vennCounts(counts.dataframe)
+      vennf = paste(mt,'venn.pdf',sep='_')
+      pdf(vennf)
+      vennDiagram(counts.venn,main=vennmain,col="maroon")
+      dev.off()
+    }
+  }
+  if (doDESeq==T) {
+    cat("*** DESeq top 50\n")
+    print(srDESeq[1:50,])
+  }
+  if (doVoom==T) {
+      cat("*** VOOM top 50\n")
+      print(rvoom[1:50,])
+  }
+  if (doCamera) {
+  doGSEA(y=DGEList,design=mydesign,histgmt=histgmt,bigmt=bigmt,ntest=20,myTitle=myTitle,
+    outfname=paste(mt,"GSEA.xls",sep="_"),fdrthresh=fdrthresh,fdrtype=fdrtype)
+  }
+  uoutput
+
+}
+
+
+doDESeq = F
+doVoom = F
+doCamera = F
+Out_Dir = "/data/extended/galaxy_data_store/job_working_directory/035/35603/dataset_47179_files"
+Input =  "/data/extended/galaxy_data_store/files/047/dataset_47177.dat"
+TreatmentName = "Y"
+TreatmentCols = "5,6,7"
+ControlName = "C"
+ControlCols= "2,3,4"
+outputfilename = "/data/extended/galaxy_data_store/job_working_directory/035/35603/galaxy_dataset_62784.dat"
+org = "mm10"
+if (org == "") { org = "hg19"}
+fdrtype = "fdr"
+priordf = 0
+fdrthresh = 0.05
+useNDF = "F"
+fQ = 0.0
+myTitle = "edgeR"
+sids = strsplit("1,2,3,1,2,3",',')
+subjects = unlist(sids)
+nsubj = length(subjects)
+builtin_gmt=""
+history_gmt=""
+
+builtin_gmt = ""
+history_gmt = ""
+DESeq_fittype=""
+if (nsubj > 0) {
+if (doDESeq) {
+ print('WARNING - cannot yet use DESeq2 for 2 way anova - see the docs')
+ doDESeq = F
+ }
+}
+TCols = as.numeric(strsplit(TreatmentCols,",")[[1]])-1
+CCols = as.numeric(strsplit(ControlCols,",")[[1]])-1
+cat('Got TCols=')
+cat(TCols)
+cat('; CCols=')
+cat(CCols)
+cat('\n')
+useCols = c(TCols,CCols)
+if (file.exists(Out_Dir) == F) dir.create(Out_Dir)
+Count_Matrix = read.table(Input,header=T,row.names=1,sep='\t') #Load tab file assume header
+snames = colnames(Count_Matrix)
+nsamples = length(snames)
+if (nsubj >  0 & nsubj != nsamples) {
+options("show.error.messages"=T)
+mess = paste('Fatal error: Supplied subject id list',paste(subjects,collapse=','),
+   'has length',nsubj,'but there are',nsamples,'samples',paste(snames,collapse=','))
+write(mess, stderr())
+quit(save="no",status=4)
+}
+
+Count_Matrix = Count_Matrix[,useCols]
+if (length(subjects) != 0) {subjects = subjects[useCols]}
+rn = rownames(Count_Matrix)
+islib = rn %in% c('librarySize','NotInBedRegions')
+LibSizes = Count_Matrix[subset(rn,islib),][1] # take first
+Count_Matrix = Count_Matrix[subset(rn,! islib),]
+group = c(rep(TreatmentName,length(TCols)), rep(ControlName,length(CCols)) )
+group = factor(group, levels=c(ControlName,TreatmentName))
+colnames(Count_Matrix) = paste(group,colnames(Count_Matrix),sep="_")
+results = edgeIt(Count_Matrix=Count_Matrix,group=group,outputfilename=outputfilename,
+                 fdrtype='BH',priordf=priordf,fdrthresh=fdrthresh,outputdir='.',
+                 myTitle='edgeR',useNDF=F,libSize=c(),filterquantile=fQ,subjects=subjects,
+                 doDESeq=doDESeq,doVoom=doVoom,doCamera=doCamera,org=org,
+                 histgmt=history_gmt,bigmt=builtin_gmt,DESeq_fittype=DESeq_fittype)
+sessionInfo()
